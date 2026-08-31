@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>دردشة العائلة</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+
+  <style>
+    body { font-family: 'Tajawal', sans-serif; }
+    #messagesList::-webkit-scrollbar { width: 6px; }
+    #messagesList::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+  </style>
+</head>
+<body class="bg-slate-100 h-screen flex flex-col overflow-hidden">
+
+  <!-- Header -->
+  <header class="bg-white border-b border-slate-200 shadow-sm px-4 py-3 flex items-center justify-between shrink-0">
+    <div>
+      <h1 class="font-black text-slate-900 text-base">💬 دردشة العائلة</h1>
+      <p id="roomLabel" class="text-[11px] text-slate-400">لسه مفعّلتش الغرفة</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button onclick="startCall()" class="p-2.5 rounded-xl bg-emerald-100 text-emerald-700 text-lg">📹</button>
+      <button onclick="openSetupModal()" class="p-2.5 rounded-xl bg-slate-100 text-slate-600 text-lg">⚙️</button>
+    </div>
+  </header>
+
+  <!-- Messages -->
+  <div id="messagesList" class="flex-1 overflow-y-auto px-3 py-4 space-y-2.5"></div>
+
+  <!-- Composer -->
+  <div class="bg-white border-t border-slate-200 p-3 shrink-0">
+    <form id="composerForm" onsubmit="handleSend(event)" class="flex items-center gap-2">
+      <input
+        type="text"
+        id="messageInput"
+        placeholder="اكتب رسالتك..."
+        autocomplete="off"
+        class="flex-1 bg-slate-100 border-2 border-transparent focus:border-emerald-500 focus:bg-white rounded-2xl px-4 py-2.5 text-sm text-slate-800 focus:outline-none"
+      >
+      <button type="submit" class="w-11 h-11 rounded-2xl bg-emerald-600 text-white text-lg flex items-center justify-center shrink-0">➤</button>
+    </form>
+  </div>
+
+  <!-- Incoming Call Modal -->
+  <div id="incomingCallModal" class="fixed inset-0 z-[60] hidden bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white rounded-[2rem] w-full max-w-sm p-6 text-center shadow-2xl">
+      <div class="text-5xl mb-3 animate-pulse">📹</div>
+      <h3 class="text-lg font-black text-slate-900 mb-1">مكالمة فيديو واردة</h3>
+      <p id="incomingCallerName" class="text-sm text-slate-500 mb-6">...</p>
+      <div class="flex gap-3">
+        <button onclick="declineIncomingCall()" class="flex-1 py-3 rounded-2xl bg-rose-600 text-white font-bold">رفض</button>
+        <button onclick="acceptIncomingCall()" class="flex-1 py-3 rounded-2xl bg-emerald-600 text-white font-bold">رد</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Full-screen Call Overlay -->
+  <div id="callOverlay" class="fixed inset-0 z-[55] hidden bg-slate-950 flex flex-col">
+    <div class="flex-1 relative overflow-hidden">
+      <video id="remoteVideo" autoplay playsinline class="w-full h-full object-cover bg-slate-900"></video>
+      <video id="localVideo" autoplay playsinline muted class="absolute bottom-4 left-4 w-28 h-40 rounded-2xl object-cover border-2 border-white/30 shadow-lg bg-slate-800"></video>
+      <p id="callStatusText" class="absolute top-4 right-4 text-white text-xs font-bold bg-black/40 px-3 py-1.5 rounded-full">جاري الاتصال...</p>
+    </div>
+    <div class="p-5 flex items-center justify-center gap-4 bg-slate-950 shrink-0">
+      <button id="micBtn" onclick="toggleMic()" class="w-14 h-14 rounded-full bg-white/10 text-white text-xl flex items-center justify-center">🎤</button>
+      <button onclick="hangUp()" class="w-16 h-16 rounded-full bg-rose-600 text-white text-2xl flex items-center justify-center">☎️</button>
+      <button id="camBtn" onclick="toggleCamera()" class="w-14 h-14 rounded-full bg-white/10 text-white text-xl flex items-center justify-center">📷</button>
+    </div>
+  </div>
+
+  <!-- Setup Modal -->
+  <div id="setupModal" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white border border-slate-200 rounded-[2rem] w-full max-w-sm shadow-2xl overflow-hidden">
+      <div class="p-5 border-b border-slate-100 bg-slate-50/50">
+        <h2 class="text-lg font-black text-slate-900">⚙️ إعداد الدردشة</h2>
+      </div>
+      <div class="p-6 space-y-4">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">اسمك</label>
+          <input type="text" id="nameInput" placeholder="مثلاً: محمود" class="w-full bg-slate-50 border-2 border-slate-200 focus:border-emerald-500 rounded-xl px-4 py-2.5 text-sm text-slate-800 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">كود الغرفة</label>
+          <input type="text" id="roomInput" placeholder="مثلاً: mahmoud-family-chat" class="w-full bg-slate-50 border-2 border-slate-200 focus:border-emerald-500 rounded-xl px-4 py-2.5 text-sm text-slate-800 focus:outline-none">
+          <p class="text-[11px] text-slate-400 mt-1">اكتب نفس الكود بالظبط على كل الأجهزة اللي عايز تربطها ببعض.</p>
+        </div>
+        <p id="setupStatus" class="text-xs font-bold p-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-600"></p>
+        <button type="button" onclick="saveSetup()" class="w-full py-2.5 rounded-xl bg-slate-900 text-white text-sm font-bold shadow-md">دخول الغرفة</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================
+    // إعدادات Supabase — نفس مشروع Easy Money
+    // ============================================================
+    const SUPABASE_URL = "https://ttnxjacfduvazxoioshv.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_ko62jz2MujSIq0BakPl3Hw_VkhuUBE4";
+    // ============================================================
+
+    let supabaseClient = null;
+    let chatChannel = null;
+
+    function escapeHtml(value) {
+      if (value === null || value === undefined) return '';
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function getSupabaseClient() {
+      if (!supabaseClient && window.supabase) {
+        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      }
+      return supabaseClient;
+    }
+
+    function getUserName() {
+      return localStorage.getItem('chat_user_name') || '';
+    }
+
+    function getRoomCode() {
+      return localStorage.getItem('chat_room_code') || '';
+    }
+
+    function openSetupModal() {
+      document.getElementById('nameInput').value = getUserName();
+      document.getElementById('roomInput').value = getRoomCode();
+      document.getElementById('setupStatus').innerText = getRoomCode()
+        ? `متصل بغرفة: ${getRoomCode()}`
+        : 'اكتب اسمك وكود الغرفة عشان تبدأ.';
+      document.getElementById('setupModal').classList.remove('hidden');
+    }
+
+    function closeSetupModal() {
+      document.getElementById('setupModal').classList.add('hidden');
+    }
+
+    async function saveSetup() {
+      const name = document.getElementById('nameInput').value.trim();
+      const room = document.getElementById('roomInput').value.trim();
+      if (!name) { alert('من فضلك اكتب اسمك.'); return; }
+      if (!room) { alert('من فضلك اكتب كود الغرفة.'); return; }
+
+      localStorage.setItem('chat_user_name', name);
+      localStorage.setItem('chat_room_code', room);
+
+      document.getElementById('roomLabel').innerText = `الغرفة: ${room} — باسم ${name}`;
+      closeSetupModal();
+
+      await loadHistory();
+      connectRealtime();
+      connectSignaling();
+    }
+
+    function renderMessage(msg) {
+      const list = document.getElementById('messagesList');
+      const isMine = msg.sender === getUserName();
+      const time = new Date(msg.created_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+
+      const bubble = document.createElement('div');
+      bubble.className = `flex ${isMine ? 'justify-start' : 'justify-end'}`;
+      bubble.innerHTML = `
+        <div class="max-w-[75%] ${isMine ? 'bg-emerald-600 text-white' : 'bg-white text-slate-800 border border-slate-200'} rounded-2xl px-4 py-2.5 shadow-sm">
+          ${!isMine ? `<p class="text-[11px] font-bold text-emerald-600 mb-0.5">${escapeHtml(msg.sender)}</p>` : ''}
+          <p class="text-sm whitespace-pre-wrap break-words">${escapeHtml(msg.message)}</p>
+          <p class="text-[10px] ${isMine ? 'text-emerald-100' : 'text-slate-400'} mt-1 text-left">${time}</p>
+        </div>
+      `;
+      list.appendChild(bubble);
+      list.scrollTop = list.scrollHeight;
+    }
+
+    async function loadHistory() {
+      const client = getSupabaseClient();
+      const room = getRoomCode();
+      if (!client || !room) return;
+
+      document.getElementById('messagesList').innerHTML = `<p class="text-xs text-slate-400 text-center py-6">جاري تحميل الرسائل...</p>`;
+
+      const { data, error } = await client
+        .from('chat_messages')
+        .select('*')
+        .eq('room_code', room)
+        .order('created_at', { ascending: true })
+        .limit(300);
+
+      const list = document.getElementById('messagesList');
+      list.innerHTML = '';
+
+      if (error) {
+        list.innerHTML = `<p class="text-xs text-rose-500 text-center py-6">تعذر تحميل الرسائل. تأكد من إعداد الجدول في Supabase.</p>`;
+        return;
+      }
+
+      if (!data || data.length === 0) {
+        list.innerHTML = `<p class="text-xs text-slate-400 text-center py-6">لسه مفيش رسائل في الغرفة دي. ابدأ الدردشة!</p>`;
+        return;
+      }
+
+      data.forEach(renderMessage);
+    }
+
+    // ============================================================
+    // مكالمات الفيديو (WebRTC) — الصوت والصورة بتسافر مباشرة بين
+    // الجهازين، وSupabase بيستخدم بس لتبادل معلومات الاتصال (Signaling)
+    // عن طريق Broadcast، من غير أي تخزين أو مساحة.
+    // ============================================================
+    const ICE_SERVERS = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ];
+
+    const mySessionId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sess-' + Math.random().toString(36).slice(2));
+
+    let signalChannel = null;
+    let peerConnection = null;
+    let localStream = null;
+    let remoteStream = null;
+    let callState = 'idle'; // idle | calling | incoming | in-call
+    let incomingCallFrom = null;
+    let remotePeerId = null;
+    let pendingIceCandidates = [];
+
+    function connectSignaling() {
+      const client = getSupabaseClient();
+      const room = getRoomCode();
+      if (!client || !room) return;
+      if (signalChannel) client.removeChannel(signalChannel);
+
+      signalChannel = client.channel('call_signal_' + room, {
+        config: { broadcast: { self: false } }
+      });
+
+      signalChannel
+        .on('broadcast', { event: 'signal' }, (payload) => handleSignal(payload.payload))
+        .subscribe();
+    }
+
+    function sendSignal(type, data) {
+      if (!signalChannel) return;
+      signalChannel.send({
+        type: 'broadcast',
+        event: 'signal',
+        payload: { type, from: mySessionId, fromName: getUserName(), ...data }
+      });
+    }
+
+    function handleSignal(msg) {
+      if (!msg || msg.from === mySessionId) return;
+      switch (msg.type) {
+        case 'call-request':
+          if (callState === 'idle') {
+            incomingCallFrom = { sessionId: msg.from, name: msg.fromName };
+            remotePeerId = msg.from;
+            showIncomingCallUI(msg.fromName || 'شخص ما');
+          } else {
+            sendSignal('call-decline', { to: msg.from, reason: 'busy' });
+          }
+          break;
+        case 'call-accept':
+          if (callState === 'calling' && (msg.to === mySessionId || !msg.to)) {
+            remotePeerId = msg.from;
+            startPeerConnectionAsCaller();
+          }
+          break;
+        case 'call-decline':
+          if (callState === 'calling' && (msg.to === mySessionId || !msg.to)) {
+            endCall(`${msg.fromName || 'الطرف التاني'} مش متاح دلوقتي`);
+          }
+          break;
+        case 'offer':
+          if (msg.to === mySessionId || !msg.to) handleOffer(msg);
+          break;
+        case 'answer':
+          if ((msg.to === mySessionId || !msg.to) && peerConnection) handleAnswer(msg);
+          break;
+        case 'ice-candidate':
+          if (msg.to === mySessionId || !msg.to) handleRemoteIce(msg);
+          break;
+        case 'hangup':
+          if (msg.to === mySessionId || !msg.to) endCall(`${msg.fromName || 'الطرف التاني'} أنهى المكالمة`);
+          break;
+      }
+    }
+
+    async function startCall() {
+      if (callState !== 'idle') return;
+      if (!getRoomCode() || !getUserName()) { openSetupModal(); return; }
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      } catch (err) {
+        alert('محتاج صلاحية الكاميرا والميكروفون عشان تبدأ المكالمة.');
+        return;
+      }
+      callState = 'calling';
+      document.getElementById('localVideo').srcObject = localStream;
+      showCallOverlay('جاري الاتصال...');
+      sendSignal('call-request', {});
+    }
+
+    function showIncomingCallUI(fromName) {
+      callState = 'incoming';
+      document.getElementById('incomingCallerName').innerText = fromName;
+      document.getElementById('incomingCallModal').classList.remove('hidden');
+    }
+
+    async function acceptIncomingCall() {
+      document.getElementById('incomingCallModal').classList.add('hidden');
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      } catch (err) {
+        alert('محتاج صلاحية الكاميرا والميكروفون عشان ترد على المكالمة.');
+        sendSignal('call-decline', { to: incomingCallFrom.sessionId, reason: 'no-media' });
+        callState = 'idle';
+        incomingCallFrom = null;
+        return;
+      }
+      document.getElementById('localVideo').srcObject = localStream;
+      showCallOverlay('جاري الاتصال...');
+      callState = 'in-call';
+      setupPeerConnection();
+      sendSignal('call-accept', { to: incomingCallFrom.sessionId });
+    }
+
+    function declineIncomingCall() {
+      document.getElementById('incomingCallModal').classList.add('hidden');
+      if (incomingCallFrom) sendSignal('call-decline', { to: incomingCallFrom.sessionId });
+      incomingCallFrom = null;
+      callState = 'idle';
+    }
+
+    function setupPeerConnection() {
+      peerConnection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+      localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+      remoteStream = new MediaStream();
+      document.getElementById('remoteVideo').srcObject = remoteStream;
+
+      peerConnection.ontrack = (event) => {
+        event.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
+        document.getElementById('callStatusText').innerText = 'متصل';
+      };
+
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate && remotePeerId) {
+          sendSignal('ice-candidate', { candidate: event.candidate, to: remotePeerId });
+        }
+      };
+
+      peerConnection.onconnectionstatechange = () => {
+        if (peerConnection && (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed')) {
+          endCall('انقطع الاتصال');
+        }
+      };
+    }
+
+    async function startPeerConnectionAsCaller() {
+      callState = 'in-call';
+      setupPeerConnection();
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      sendSignal('offer', { sdp: offer, to: remotePeerId });
+    }
+
+    async function handleOffer(msg) {
+      remotePeerId = msg.from;
+      if (!peerConnection) setupPeerConnection();
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      flushPendingIce();
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      sendSignal('answer', { sdp: answer, to: msg.from });
+    }
+
+    async function handleAnswer(msg) {
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      flushPendingIce();
+    }
+
+    function handleRemoteIce(msg) {
+      if (!msg.candidate) return;
+      if (peerConnection && peerConnection.remoteDescription) {
+        peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(() => {});
+      } else {
+        pendingIceCandidates.push(msg.candidate);
+      }
+    }
+
+    function flushPendingIce() {
+      pendingIceCandidates.forEach(c => peerConnection.addIceCandidate(new RTCIceCandidate(c)).catch(() => {}));
+      pendingIceCandidates = [];
+    }
+
+    function showCallOverlay(status) {
+      document.getElementById('callStatusText').innerText = status;
+      document.getElementById('callOverlay').classList.remove('hidden');
+    }
+
+    function hideCallOverlay() {
+      document.getElementById('callOverlay').classList.add('hidden');
+    }
+
+    function endCall(reason) {
+      if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+      }
+      if (localStream) {
+        localStream.getTracks().forEach(t => t.stop());
+        localStream = null;
+      }
+      remoteStream = null;
+      document.getElementById('localVideo').srcObject = null;
+      document.getElementById('remoteVideo').srcObject = null;
+      hideCallOverlay();
+      document.getElementById('incomingCallModal').classList.add('hidden');
+      callState = 'idle';
+      incomingCallFrom = null;
+      remotePeerId = null;
+      pendingIceCandidates = [];
+    }
+
+    function hangUp() {
+      sendSignal('hangup', { to: remotePeerId });
+      endCall(null);
+    }
+
+    function toggleMic() {
+      if (!localStream) return;
+      const track = localStream.getAudioTracks()[0];
+      if (!track) return;
+      track.enabled = !track.enabled;
+      document.getElementById('micBtn').innerText = track.enabled ? '🎤' : '🔇';
+    }
+
+    function toggleCamera() {
+      if (!localStream) return;
+      const track = localStream.getVideoTracks()[0];
+      if (!track) return;
+      track.enabled = !track.enabled;
+      document.getElementById('camBtn').innerText = track.enabled ? '📷' : '🚫';
+    }
+
+    function connectRealtime() {
+      const client = getSupabaseClient();
+      const room = getRoomCode();
+      if (!client || !room) return;
+
+      if (chatChannel) client.removeChannel(chatChannel);
+
+      chatChannel = client
+        .channel('chat_room_' + room)
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'chat_messages',
+          filter: `room_code=eq.${room}`
+        }, (payload) => {
+          // Avoid double-rendering the message we just sent ourselves
+          if (payload.new && payload.new.sender === getUserName() && justSentIds.has(payload.new.id)) {
+            justSentIds.delete(payload.new.id);
+            return;
+          }
+          renderMessage(payload.new);
+        })
+        .subscribe();
+    }
+
+    const justSentIds = new Set();
+
+    async function handleSend(e) {
+      e.preventDefault();
+      const input = document.getElementById('messageInput');
+      const text = input.value.trim();
+      if (!text) return;
+
+      const name = getUserName();
+      const room = getRoomCode();
+      if (!name || !room) { openSetupModal(); return; }
+
+      input.value = '';
+
+      const client = getSupabaseClient();
+      const { data, error } = await client
+        .from('chat_messages')
+        .insert({ room_code: room, sender: name, message: text })
+        .select()
+        .single();
+
+      if (error) {
+        alert('تعذر إرسال الرسالة. تأكد من الاتصال بالإنترنت وإعداد الجدول.');
+        input.value = text;
+        return;
+      }
+
+      justSentIds.add(data.id);
+      renderMessage(data);
+    }
+
+    // Init
+    (async function init() {
+      const name = getUserName();
+      const room = getRoomCode();
+      if (name && room) {
+        document.getElementById('roomLabel').innerText = `الغرفة: ${room} — باسم ${name}`;
+        closeSetupModal();
+        await loadHistory();
+        connectRealtime();
+        connectSignaling();
+      } else {
+        openSetupModal();
+      }
+    })();
+  </script>
+</body>
+</html>
