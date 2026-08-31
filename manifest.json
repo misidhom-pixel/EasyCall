@@ -1,6 +1,6 @@
 {
-  "name": "دردشة العائلة",
-  "short_name": "الدردشة",
+  "name": "EasyCall",
+  "short_name": "EasyCall",
   "description": "دردشة نصية ومكالمات فيديو بين أفراد العائلة",
   "start_url": "./index.html",
   "scope": "./",
