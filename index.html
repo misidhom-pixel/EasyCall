@@ -30,7 +30,8 @@
       <p id="roomLabel" class="text-[11px] text-slate-400">لسه مفعّلتش الغرفة</p>
     </div>
     <div class="flex items-center gap-2">
-      <button onclick="startCall()" class="p-2.5 rounded-xl bg-emerald-100 text-emerald-700 text-lg">📹</button>
+      <button onclick="startCall(false)" class="p-2.5 rounded-xl bg-emerald-100 text-emerald-700 text-lg">📞</button>
+      <button onclick="startCall(true)" class="p-2.5 rounded-xl bg-emerald-100 text-emerald-700 text-lg">📹</button>
       <button onclick="openSetupModal()" class="p-2.5 rounded-xl bg-slate-100 text-slate-600 text-lg">⚙️</button>
     </div>
   </header>
@@ -55,8 +56,8 @@
   <!-- Incoming Call Modal -->
   <div id="incomingCallModal" class="fixed inset-0 z-[60] hidden bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
     <div class="bg-white rounded-[2rem] w-full max-w-sm p-6 text-center shadow-2xl">
-      <div class="text-5xl mb-3 animate-pulse">📹</div>
-      <h3 class="text-lg font-black text-slate-900 mb-1">مكالمة فيديو واردة</h3>
+      <div id="incomingCallIcon" class="text-5xl mb-3 animate-pulse">📹</div>
+      <h3 id="incomingCallTitle" class="text-lg font-black text-slate-900 mb-1">مكالمة فيديو واردة</h3>
       <p id="incomingCallerName" class="text-sm text-slate-500 mb-6">...</p>
       <div class="flex gap-3">
         <button onclick="declineIncomingCall()" class="flex-1 py-3 rounded-2xl bg-rose-600 text-white font-bold">رفض</button>
@@ -67,13 +68,19 @@
 
   <!-- Full-screen Call Overlay -->
   <div id="callOverlay" class="fixed inset-0 z-[55] hidden bg-slate-950 flex flex-col">
-    <div class="flex-1 relative overflow-hidden">
+    <div id="videoCallArea" class="flex-1 relative overflow-hidden">
       <video id="remoteVideo" autoplay playsinline class="w-full h-full object-cover bg-slate-900"></video>
       <video id="localVideo" autoplay playsinline muted class="absolute bottom-4 left-4 w-28 h-40 rounded-2xl object-cover border-2 border-white/30 shadow-lg bg-slate-800"></video>
       <p id="callStatusText" class="absolute top-4 right-4 text-white text-xs font-bold bg-black/40 px-3 py-1.5 rounded-full">جاري الاتصال...</p>
     </div>
+    <div id="audioCallArea" class="hidden flex-1 flex-col items-center justify-center text-white">
+      <div class="w-28 h-28 rounded-full bg-white/10 flex items-center justify-center text-5xl mb-4">🎙️</div>
+      <p id="audioCallName" class="text-lg font-bold mb-1">...</p>
+      <p id="audioCallStatus" class="text-sm text-slate-300">جاري الاتصال...</p>
+    </div>
     <div class="p-5 flex items-center justify-center gap-4 bg-slate-950 shrink-0">
       <button id="micBtn" onclick="toggleMic()" class="w-14 h-14 rounded-full bg-white/10 text-white text-xl flex items-center justify-center">🎤</button>
+      <button id="speakerBtn" onclick="toggleSpeaker()" class="w-14 h-14 rounded-full bg-white/10 text-white text-xl flex items-center justify-center">🔊</button>
       <button onclick="hangUp()" class="w-16 h-16 rounded-full bg-rose-600 text-white text-2xl flex items-center justify-center">☎️</button>
       <button id="camBtn" onclick="toggleCamera()" class="w-14 h-14 rounded-full bg-white/10 text-white text-xl flex items-center justify-center">📷</button>
     </div>
@@ -216,6 +223,47 @@
     }
 
     // ============================================================
+    // نغمة الرنين — متولّدة بالكود نفسه (Web Audio)، مش ملف صوتي خارجي،
+    // فتشتغل حتى بدون إنترنت وبدون أي مساحة تخزين إضافية.
+    // ============================================================
+    let ringAudioCtx = null;
+    let ringIntervalId = null;
+
+    function playRingtone() {
+      stopRingtone();
+      if (!ringAudioCtx) {
+        ringAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (ringAudioCtx.state === 'suspended') ringAudioCtx.resume();
+
+      function beepPair() {
+        const now = ringAudioCtx.currentTime;
+        [0, 0.35].forEach(offset => {
+          const osc = ringAudioCtx.createOscillator();
+          const gain = ringAudioCtx.createGain();
+          osc.frequency.value = 900;
+          osc.type = 'sine';
+          osc.connect(gain);
+          gain.connect(ringAudioCtx.destination);
+          gain.gain.setValueAtTime(0.0001, now + offset);
+          gain.gain.exponentialRampToValueAtTime(0.35, now + offset + 0.05);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.3);
+          osc.start(now + offset);
+          osc.stop(now + offset + 0.35);
+        });
+      }
+      beepPair();
+      ringIntervalId = setInterval(beepPair, 1800);
+    }
+
+    function stopRingtone() {
+      if (ringIntervalId) {
+        clearInterval(ringIntervalId);
+        ringIntervalId = null;
+      }
+    }
+
+    // ============================================================
     // مكالمات الفيديو (WebRTC) — الصوت والصورة بتسافر مباشرة بين
     // الجهازين، وSupabase بيستخدم بس لتبادل معلومات الاتصال (Signaling)
     // عن طريق Broadcast، من غير أي تخزين أو مساحة.
@@ -235,6 +283,8 @@
     let incomingCallFrom = null;
     let remotePeerId = null;
     let pendingIceCandidates = [];
+    let isVideoCall = true;
+    let incomingCallVideo = true;
 
     function connectSignaling() {
       const client = getSupabaseClient();
@@ -267,7 +317,8 @@
           if (callState === 'idle') {
             incomingCallFrom = { sessionId: msg.from, name: msg.fromName };
             remotePeerId = msg.from;
-            showIncomingCallUI(msg.fromName || 'شخص ما');
+            incomingCallVideo = msg.video !== false;
+            showIncomingCallUI(msg.fromName || 'شخص ما', incomingCallVideo);
           } else {
             sendSignal('call-decline', { to: msg.from, reason: 'busy' });
           }
@@ -275,6 +326,7 @@
         case 'call-accept':
           if (callState === 'calling' && (msg.to === mySessionId || !msg.to)) {
             remotePeerId = msg.from;
+            document.getElementById('audioCallName').innerText = msg.fromName || '';
             startPeerConnectionAsCaller();
           }
           break;
@@ -298,39 +350,57 @@
       }
     }
 
-    async function startCall() {
+    async function startCall(withVideo) {
       if (callState !== 'idle') return;
       if (!getRoomCode() || !getUserName()) { openSetupModal(); return; }
+      isVideoCall = !!withVideo;
       try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localStream = await navigator.mediaDevices.getUserMedia({ video: isVideoCall, audio: true });
       } catch (err) {
-        alert('محتاج صلاحية الكاميرا والميكروفون عشان تبدأ المكالمة.');
+        alert(isVideoCall ? 'محتاج صلاحية الكاميرا والميكروفون عشان تبدأ المكالمة.' : 'محتاج صلاحية الميكروفون عشان تبدأ المكالمة.');
         return;
       }
       callState = 'calling';
+      applyCallUIMode(isVideoCall);
       document.getElementById('localVideo').srcObject = localStream;
+      document.getElementById('audioCallName').innerText = 'جاري النداء...';
       showCallOverlay('جاري الاتصال...');
-      sendSignal('call-request', {});
+      sendSignal('call-request', { video: isVideoCall });
     }
 
-    function showIncomingCallUI(fromName) {
+    function applyCallUIMode(video) {
+      document.getElementById('videoCallArea').classList.toggle('hidden', !video);
+      document.getElementById('videoCallArea').classList.toggle('flex', video);
+      document.getElementById('audioCallArea').classList.toggle('hidden', video);
+      document.getElementById('audioCallArea').classList.toggle('flex', !video);
+      document.getElementById('camBtn').classList.toggle('hidden', !video);
+    }
+
+    function showIncomingCallUI(fromName, withVideo) {
       callState = 'incoming';
       document.getElementById('incomingCallerName').innerText = fromName;
+      document.getElementById('incomingCallIcon').innerText = withVideo ? '📹' : '📞';
+      document.getElementById('incomingCallTitle').innerText = withVideo ? 'مكالمة فيديو واردة' : 'مكالمة صوتية واردة';
       document.getElementById('incomingCallModal').classList.remove('hidden');
+      playRingtone();
     }
 
     async function acceptIncomingCall() {
+      stopRingtone();
       document.getElementById('incomingCallModal').classList.add('hidden');
+      isVideoCall = incomingCallVideo;
       try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localStream = await navigator.mediaDevices.getUserMedia({ video: isVideoCall, audio: true });
       } catch (err) {
-        alert('محتاج صلاحية الكاميرا والميكروفون عشان ترد على المكالمة.');
+        alert(isVideoCall ? 'محتاج صلاحية الكاميرا والميكروفون عشان ترد على المكالمة.' : 'محتاج صلاحية الميكروفون عشان ترد على المكالمة.');
         sendSignal('call-decline', { to: incomingCallFrom.sessionId, reason: 'no-media' });
         callState = 'idle';
         incomingCallFrom = null;
         return;
       }
+      applyCallUIMode(isVideoCall);
       document.getElementById('localVideo').srcObject = localStream;
+      document.getElementById('audioCallName').innerText = incomingCallFrom ? incomingCallFrom.name : '';
       showCallOverlay('جاري الاتصال...');
       callState = 'in-call';
       setupPeerConnection();
@@ -338,6 +408,7 @@
     }
 
     function declineIncomingCall() {
+      stopRingtone();
       document.getElementById('incomingCallModal').classList.add('hidden');
       if (incomingCallFrom) sendSignal('call-decline', { to: incomingCallFrom.sessionId });
       incomingCallFrom = null;
@@ -355,6 +426,7 @@
       peerConnection.ontrack = (event) => {
         event.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
         document.getElementById('callStatusText').innerText = 'متصل';
+        document.getElementById('audioCallStatus').innerText = 'متصل';
       };
 
       peerConnection.onicecandidate = (event) => {
@@ -417,6 +489,7 @@
     }
 
     function endCall(reason) {
+      stopRingtone();
       if (peerConnection) {
         peerConnection.close();
         peerConnection = null;
@@ -434,6 +507,9 @@
       incomingCallFrom = null;
       remotePeerId = null;
       pendingIceCandidates = [];
+      document.getElementById('micBtn').innerText = '🎤';
+      document.getElementById('camBtn').innerText = '📷';
+      document.getElementById('speakerBtn').innerText = '🔊';
     }
 
     function hangUp() {
@@ -455,6 +531,38 @@
       if (!track) return;
       track.enabled = !track.enabled;
       document.getElementById('camBtn').innerText = track.enabled ? '📷' : '🚫';
+    }
+
+    // ============================================================
+    // تبديل مكبر الصوت (سماعة خارجية / سماعة الأذن الداخلية)
+    // ملحوظة: مدعوم في Chrome/Edge (ديسكتوب وأندرويد)، وغير مدعوم في
+    // Safari/iOS أو Firefox — بيتعامل مع الحالة دي برسالة واضحة.
+    // ============================================================
+    let audioOutputDevices = [];
+    let currentSinkIndex = 0;
+
+    async function toggleSpeaker() {
+      const remoteEl = document.getElementById('remoteVideo');
+      if (typeof remoteEl.setSinkId !== 'function') {
+        alert('تبديل مكبر الصوت مش مدعوم في المتصفح ده.');
+        return;
+      }
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        audioOutputDevices = devices.filter(d => d.kind === 'audiooutput');
+        if (audioOutputDevices.length === 0) {
+          alert('مفيش أجهزة صوت متاحة للتبديل على الجهاز ده.');
+          return;
+        }
+        currentSinkIndex = (currentSinkIndex + 1) % audioOutputDevices.length;
+        const chosen = audioOutputDevices[currentSinkIndex];
+        await remoteEl.setSinkId(chosen.deviceId);
+        const label = (chosen.label || '').toLowerCase();
+        const isSpeaker = label.includes('speaker') || label.includes('سماعة خارجية') || label === '';
+        document.getElementById('speakerBtn').innerText = isSpeaker ? '🔊' : '🔈';
+      } catch (err) {
+        alert('تعذر تبديل مكبر الصوت على الجهاز ده.');
+      }
     }
 
     function connectRealtime() {
