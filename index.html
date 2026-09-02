@@ -270,7 +270,14 @@
     // ============================================================
     const ICE_SERVERS = [
       { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' }
+      { urls: 'stun:stun1.l.google.com:19302' },
+      // TURN relay servers (free public service) — needed when a direct
+      // connection between the two devices isn't possible (common on
+      // mobile data / restrictive networks). Without these, signaling
+      // can succeed (ringing, accept) while media never actually connects.
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
     ];
 
     const mySessionId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sess-' + Math.random().toString(36).slice(2));
@@ -404,6 +411,7 @@
       showCallOverlay('جاري الاتصال...');
       callState = 'in-call';
       setupPeerConnection();
+      armConnectTimeout();
       sendSignal('call-accept', { to: incomingCallFrom.sessionId });
     }
 
@@ -427,6 +435,7 @@
         event.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
         document.getElementById('callStatusText').innerText = 'متصل';
         document.getElementById('audioCallStatus').innerText = 'متصل';
+        clearConnectTimeout();
       };
 
       peerConnection.onicecandidate = (event) => {
@@ -435,16 +444,51 @@
         }
       };
 
+      // 'disconnected' can be transient (brief network blip) and often
+      // recovers on its own — only treat 'failed' as final immediately.
+      // Give 'disconnected' a grace window before giving up on it too.
+      let disconnectTimeout = null;
       peerConnection.onconnectionstatechange = () => {
-        if (peerConnection && (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed')) {
-          endCall('انقطع الاتصال');
+        if (!peerConnection) return;
+        const state = peerConnection.connectionState;
+        if (state === 'failed') {
+          if (disconnectTimeout) clearTimeout(disconnectTimeout);
+          endCall('تعذر الاتصال — الشبكة بتمنع الاتصال المباشر بين الجهازين');
+        } else if (state === 'disconnected') {
+          disconnectTimeout = setTimeout(() => {
+            if (peerConnection && peerConnection.connectionState === 'disconnected') {
+              endCall('انقطع الاتصال');
+            }
+          }, 8000);
+        } else if (state === 'connected' && disconnectTimeout) {
+          clearTimeout(disconnectTimeout);
+          disconnectTimeout = null;
         }
       };
+    }
+
+    let connectTimeoutId = null;
+
+    function armConnectTimeout() {
+      clearConnectTimeout();
+      connectTimeoutId = setTimeout(() => {
+        if (peerConnection && peerConnection.connectionState !== 'connected') {
+          endCall('تعذر إتمام الاتصال — جرب تاني أو اتأكد من الشبكة');
+        }
+      }, 20000);
+    }
+
+    function clearConnectTimeout() {
+      if (connectTimeoutId) {
+        clearTimeout(connectTimeoutId);
+        connectTimeoutId = null;
+      }
     }
 
     async function startPeerConnectionAsCaller() {
       callState = 'in-call';
       setupPeerConnection();
+      armConnectTimeout();
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
       sendSignal('offer', { sdp: offer, to: remotePeerId });
@@ -490,6 +534,7 @@
 
     function endCall(reason) {
       stopRingtone();
+      clearConnectTimeout();
       if (peerConnection) {
         peerConnection.close();
         peerConnection = null;
